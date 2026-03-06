@@ -1,0 +1,12 @@
+{
+  "domain": "raybans_meta",
+  "name": "Ray-Ban Meta Glasses",
+  "version": "0.1.0",
+  "codeowners": [],
+  "config_flow": true,
+  "documentation": "https://github.com/your-org/claude-raybans",
+  "integration_type": "device",
+  "iot_class": "local_push",
+  "dependencies": ["webhook"],
+  "requirements": []
+}

@@ -1,0 +1,22 @@
+# Android
+*.iml
+.gradle/
+.idea/
+local.properties
+android-bridge/build/
+android-bridge/app/build/
+android-bridge/**/.cxx/
+*.apk
+*.aab
+*.keystore
+*.jks
+
+# Python / HA dev
+__pycache__/
+*.pyc
+.venv/
+.env
+
+# OS
+.DS_Store
+Thumbs.db

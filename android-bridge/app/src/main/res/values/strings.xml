@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Ray-Ban HA Bridge</string>
+
+    <string name="hint_ha_url">Home Assistant URL (e.g. https://example.ui.nabu.casa)</string>
+    <string name="hint_ha_token">Long-lived access token</string>
+    <string name="hint_device_id">Device ID (e.g. raybans)</string>
+    <string name="hint_mjpeg_port">MJPEG port (default 8080)</string>
+
+    <string name="btn_connect">Connect</string>
+    <string name="btn_disconnect">Disconnect</string>
+
+    <string name="hint_mjpeg_info">The MJPEG stream URL to enter in HA config flow is:\nhttp://&lt;this-phone-IP&gt;:&lt;port&gt;</string>
+
+    <string name="notif_channel_name">Ray-Ban HA Bridge</string>
+    <string name="notif_channel_desc">Foreground service keeping glasses connected to Home Assistant</string>
+</resources>

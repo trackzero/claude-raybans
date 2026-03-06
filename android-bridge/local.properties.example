@@ -1,0 +1,11 @@
+# Copy this file to local.properties and fill in your values.
+# local.properties is git-ignored — never commit secrets.
+
+# Android SDK path (auto-populated by Android Studio)
+sdk.dir=/home/user/Android/Sdk
+
+# GitHub Packages credentials for mwdat SDK
+# Create a fine-grained PAT at https://github.com/settings/tokens
+# with read:packages scope for facebook/meta-wearables-dat-android
+github.username=YOUR_GITHUB_USERNAME
+github.token=YOUR_GITHUB_PAT_WITH_READ_PACKAGES_SCOPE

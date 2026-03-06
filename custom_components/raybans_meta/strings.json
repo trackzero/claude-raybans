@@ -1,0 +1,21 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Ray-Ban Meta Glasses",
+        "description": "Enter a unique device ID (e.g. 'raybans') and the optional MJPEG stream URL served by the Android bridge app on your local network.",
+        "data": {
+          "device_id": "Device ID",
+          "mjpeg_url": "MJPEG Stream URL (optional)"
+        }
+      }
+    },
+    "error": {
+      "invalid_device_id": "Device ID must contain only letters, digits, and underscores.",
+      "already_configured": "A Ray-Ban Meta device with this ID is already configured."
+    },
+    "abort": {
+      "already_configured": "Device is already configured."
+    }
+  }
+}
