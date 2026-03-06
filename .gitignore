@@ -3,6 +3,7 @@
 .gradle/
 .idea/
 local.properties
+build/
 android-bridge/build/
 android-bridge/app/build/
 android-bridge/**/.cxx/
@@ -10,6 +11,22 @@ android-bridge/**/.cxx/
 *.aab
 *.keystore
 *.jks
+
+# Android Studio generated
+captures/
+.externalNativeBuild/
+.cxx/
+output-metadata.json
+misc.xml
+deploymentTargetDropDown.xml
+render.experimental.xml
+*.hprof
+
+# Google Services
+google-services.json
+
+# Log files
+*.log
 
 # Python / HA dev
 __pycache__/
