@@ -13,6 +13,7 @@ import kotlin.math.min
 
 private const val TAG = "HaWebSocketClient"
 private const val EVENT_NOTIFY = "raybans_meta_notify"
+private const val EVENT_ASK = "raybans_meta_ask"
 
 /**
  * Persistent OkHttp WebSocket connection to HA's WebSocket API.
@@ -32,6 +33,7 @@ class HaWebSocketClient(
     private val haUrl: String,
     private val haToken: String,
     val onNotifyEvent: (text: String, deviceId: String) -> Unit,
+    var onAskEvent: ((text: String) -> Unit)? = null,
 ) {
     private val msgId = AtomicInteger(1)
     private var ws: WebSocket? = null
@@ -121,21 +123,38 @@ class HaWebSocketClient(
     }
 
     private fun subscribeToNotifyEvents() {
-        Log.i(TAG, "Authenticated; subscribing to $EVENT_NOTIFY events")
-        val sub = JSONObject().apply {
+        Log.i(TAG, "Authenticated; subscribing to $EVENT_NOTIFY and $EVENT_ASK events")
+        sendMessage(JSONObject().apply {
             put("type", "subscribe_events")
             put("event_type", EVENT_NOTIFY)
-        }
-        subscriptionId = sendMessage(sub)
+        })
+        sendMessage(JSONObject().apply {
+            put("type", "subscribe_events")
+            put("event_type", EVENT_ASK)
+        })
     }
 
     private fun handleEvent(msg: JSONObject) {
-        val eventData = msg.optJSONObject("event")?.optJSONObject("data") ?: return
-        val text = eventData.optString("text")
-        val deviceId = eventData.optString("device_id")
-        if (text.isNotEmpty()) {
-            Log.d(TAG, "Notify event: text=$text device_id=$deviceId")
-            onNotifyEvent(text, deviceId)
+        val event = msg.optJSONObject("event") ?: return
+        val eventType = event.optString("event_type")
+        val eventData = event.optJSONObject("data") ?: return
+
+        when (eventType) {
+            EVENT_NOTIFY -> {
+                val text = eventData.optString("text")
+                val deviceId = eventData.optString("device_id")
+                if (text.isNotEmpty()) {
+                    Log.d(TAG, "Notify event: text=$text device_id=$deviceId")
+                    onNotifyEvent(text, deviceId)
+                }
+            }
+            EVENT_ASK -> {
+                val text = eventData.optString("text")
+                if (text.isNotEmpty()) {
+                    Log.d(TAG, "Ask event: text=$text")
+                    onAskEvent?.invoke(text)
+                }
+            }
         }
     }
 

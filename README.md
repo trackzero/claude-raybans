@@ -1,94 +1,88 @@
 # Ray-Ban Meta Gen 2 — Home Assistant Integration
 
-Integrates Ray-Ban Meta Gen 2 smart glasses with [Home Assistant](https://www.home-assistant.io/) via an Android bridge app. No cloud dependency beyond your existing HA setup — works remotely via Nabu Casa or any external HA URL.
+An Android bridge app and HA custom integration that connects your Ray-Ban Meta Gen 2 glasses to Home Assistant. Built by Claude, supervised by a human who should probably have read the SDK docs first.
 
 ---
 
-## Features
+## Does it actually work?
 
-| Feature | How it works |
-|---|---|
-| **Notifications** | Call `notify.raybans` in HA → TTS plays through glasses speakers |
-| **Voice / Assist** | Glasses mic streams to HA Assist pipeline → STT → intent → TTS response on glasses |
-| **Battery sensor** | Glasses battery % appears as a HA sensor entity |
-| **Worn sensor** | Binary sensor tracks whether glasses are on your face |
-| **BT connected sensor** | Binary sensor tracks Bluetooth connection to phone |
-| **Camera stream** | 720p MJPEG stream from glasses camera in a HA dashboard card |
+Mostly! Here's the honest breakdown:
+
+| Feature | Status | Notes |
+|---|---|---|
+| **HA Notifications → glasses TTS** | ✅ Works | `notify.raybans` → speech on glasses speakers |
+| **"Ask HA" via notification button** | ✅ Works | Tap notification → phone mic → Claude + HA MCP → TTS |
+| **"Hey Meta, ask HA to…" via webhook** | ✅ Works | Meta AI custom action → HA webhook → Claude + MCP → TTS |
+| **Battery sensor** | ✅ Works | Required fixing an Android 13+ broadcast registration bug that silently dropped all events |
+| **Connected sensor** | ✅ Works | Uses Bluetooth ACL events — mwdat's session state is useless here |
+| **Worn sensor** | ❌ Unavailable | mwdat v0.4.0 has no worn detection API. The code is there. The SDK is not cooperating. |
+| **Camera MJPEG stream** | ❌ Non-functional | `PhotoData` in mwdat v0.4.0 is an opaque interface with no `toByteArray()`. We call `capturePhoto()` and return null. With aplomb. |
+| **Glasses mic → HA Assist** | ❌ Not yet | mwdat v0.4.0 exposes no public audio stream. Phone mic is the fallback for Claude queries. |
+
+The short version: notifications work great, Claude voice control works great, sensors mostly work, camera is a stub, and the mwdat SDK is holding everything else hostage until Meta finishes the API.
+
+---
+
+## How the "Ask HA" flow works
+
+```
+Option A — Tap "Ask HA" in the persistent notification:
+  Pull down notification shade ──tap──► Android SpeechRecognizer (phone mic)
+      → transcribed text
+      → Claude API (haiku-4-5) with your HA MCP tools
+      → Claude calls HassTurnOn / HassLightSet / HassGetState / etc.
+      → Claude's response → Android TTS → glasses speakers (Bluetooth A2DP)
+
+Option B — "Hey Meta, ask home assistant to turn on Jeff's office light":
+  Ray-Ban glasses ──BT──► Meta AI (cloud)
+      → your Meta AI custom action triggers
+      → POST https://your-ha.nabu.casa/api/webhook/raybans_ask_<device_id>
+      → HA fires raybans_meta_ask event on the event bus
+      → Android bridge receives it via the existing WebSocket connection
+      → Claude API + HA MCP tools → TTS response on glasses
+```
+
+Option B is the glasses-native experience. Option A is for when you're too close to your phone to feel like saying "Hey Meta." Both use Claude with full access to your HA MCP server.
 
 ---
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────┐
-│           Android Phone             │
-│                                     │
-│  GlassesBridgeService (foreground)  │
-│  ├── MetaGlassesManager  (mwdat)    │◄──── Bluetooth ────► Ray-Ban Meta Gen 2
-│  ├── BatteryMonitor      (BT API)   │                      (mic, speakers,
-│  ├── TtsPlayer           (A2DP)     │                       camera, battery)
-│  ├── VoiceCapture        (VAD)      │
-│  ├── CameraStreamServer  (HTTP)     │──── MJPEG (LAN) ───► HA Camera entity
-│  ├── HaWebSocketClient   (OkHttp)   │◄─── WS events ─────► HA WebSocket API
-│  ├── HaApiClient         (REST)     │──── state push ────► /api/states/...
-│  └── AssistPipelineClient           │◄──► assist_pipeline/run
-└─────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────┐
+│                       Android Phone                        │
+│                                                            │
+│  GlassesBridgeService (foreground)                         │
+│  ├── MetaGlassesManager     mwdat SDK (connection mgmt)    │◄──BT──► Ray-Ban Meta Gen 2
+│  ├── BatteryMonitor         BT ACL + battery broadcasts    │         (mic†, speakers,
+│  ├── TtsPlayer              Android TTS → A2DP             │          camera†, battery)
+│  ├── PhoneMicCapture        SpeechRecognizer (phone mic)   │
+│  ├── CameraStreamServer     NanoHTTPD MJPEG (stub†)        │──LAN──► HA Camera entity
+│  ├── HaWebSocketClient      HA WS auth + event subscr.    │◄──WS──► HA WebSocket API
+│  ├── HaApiClient            HA event firing (sensor push)  │
+│  ├── McpClient              HA MCP HTTP (tools/list+call)  │──────► HA /api/mcp
+│  └── ClaudeVoiceAssist      Claude API agentic tool loop   │──────► api.anthropic.com
+└───────────────────────────────────────────────────────────┘
+
+† stub: mwdat v0.4.0 doesn't expose these publicly yet
 ```
 
 **Key design decisions:**
-- No MQTT broker required — all HA communication uses HA's native WebSocket + REST APIs
-- Works remotely via Nabu Casa / any external HA URL with a long-lived access token
-- Camera stream is LAN-only (Bluetooth bandwidth cap); all other features work remotely
-- State is pushed from Android to HA (not polled), so entities update in real time
-
----
-
-## Repository Structure
-
-```
-claude-raybans/
-├── custom_components/raybans_meta/   # HA custom integration
-│   ├── manifest.json
-│   ├── const.py
-│   ├── config_flow.py
-│   ├── __init__.py
-│   ├── sensor.py                     # Battery %
-│   ├── binary_sensor.py              # Worn, Connected
-│   ├── camera.py                     # MJPEG proxy
-│   ├── notify.py                     # Fires HA event → Android TTS
-│   └── strings.json
-└── android-bridge/                   # Android foreground service app
-    ├── settings.gradle.kts
-    ├── build.gradle.kts
-    ├── gradle/libs.versions.toml
-    ├── local.properties.example
-    └── app/src/main/
-        ├── AndroidManifest.xml
-        └── kotlin/com/raybans/ha/
-            ├── MainActivity.kt
-            ├── prefs/AppPreferences.kt
-            ├── service/GlassesBridgeService.kt
-            ├── glasses/
-            │   ├── MetaGlassesManager.kt    # mwdat SDK wrapper
-            │   ├── BatteryMonitor.kt        # BT broadcast receiver
-            │   ├── TtsPlayer.kt             # Android TTS + AudioTrack
-            │   ├── VoiceCapture.kt          # Energy VAD
-            │   └── CameraStreamServer.kt    # NanoHTTPD MJPEG server
-            └── ha/
-                ├── HaWebSocketClient.kt     # Auth, event subscription, reconnect
-                ├── HaApiClient.kt           # REST state push
-                └── AssistPipelineClient.kt  # assist_pipeline/run audio streaming
-```
+- No MQTT. HA native WebSocket + REST. Works remotely via Nabu Casa.
+- Sensors use HA event bus (Android fires `raybans_meta_sensor` → component calls `async_write_ha_state`). Direct `/api/states/` REST pushes were tried first and abandoned when we discovered HA generates entity IDs that don't match human intuition.
+- Claude is the voice AI because HA Assist needs the glasses mic stream, which mwdat doesn't provide. Claude also handles ambiguous commands better than "I didn't understand that."
+- The connected sensor uses Bluetooth ACL broadcasts, not mwdat session state. mwdat's DeviceSession goes `STOPPED` almost immediately; turns out that's the SDK being dramatic, not the glasses actually disconnecting.
 
 ---
 
 ## Prerequisites
 
-- **Home Assistant** 2024.x or later (Core, OS, or Container)
-- **Android phone** running Android 10+ (API 29+), paired to the glasses via the Meta app
-- **Ray-Ban Meta Gen 2** glasses paired via Bluetooth to the Android phone
-- **Meta Wearables Device Access Toolkit (mwdat)** SDK access — request access at [Meta for Developers](https://developers.facebook.com/docs/wearables)
-- **GitHub Personal Access Token** with `read:packages` scope (for mwdat SDK download)
+- **Home Assistant** 2024.x+ with the **MCP Server integration** enabled (`Settings → Devices & Services → Add Integration → MCP Server`)
+- **Android phone** Android 10+ (API 29+), paired to glasses via the Meta View app
+- **Ray-Ban Meta Gen 2** glasses
+- **Meta Wearables Device Access Toolkit (mwdat)** SDK access — [apply at Meta for Developers](https://developers.facebook.com/docs/wearables). Budget a few days for approval.
+- **Anthropic API key** — [console.anthropic.com](https://console.anthropic.com)
+- **GitHub PAT** with `read:packages` scope (to download mwdat from GitHub Packages)
 
 ---
 
@@ -96,38 +90,34 @@ claude-raybans/
 
 ### 1. HA Custom Integration
 
-Copy the `custom_components/raybans_meta/` directory into your HA config folder:
+Copy the integration directory into your HA config:
 
 ```
-<ha-config>/
-└── custom_components/
-    └── raybans_meta/   ← copy here
+<ha-config>/custom_components/raybans_meta/   ← copy this whole folder
 ```
 
-Restart Home Assistant, then:
+Restart Home Assistant, then **Settings → Devices & Services → Add Integration → Ray-Ban Meta**.
 
-1. Go to **Settings → Devices & Services → Add Integration**
-2. Search for **Ray-Ban Meta**
-3. Enter your **Device ID** (e.g. `raybans` — used in entity IDs)
-4. Enter the **MJPEG URL** (optional; e.g. `http://192.168.1.x:8080` — your phone's LAN IP)
+| Field | Value |
+|---|---|
+| Device ID | Your label, e.g. `wayfarer`. Appears in entity IDs. |
+| MJPEG URL | `http://<phone-LAN-IP>:8080` (optional; camera doesn't work yet anyway) |
 
 Entities created:
 
-| Entity | ID pattern |
+| Entity | Status |
 |---|---|
-| Battery | `sensor.raybans_battery_{device_id}` |
-| Worn | `binary_sensor.raybans_worn_{device_id}` |
-| Connected | `binary_sensor.raybans_connected_{device_id}` |
-| Camera | `camera.raybans_camera_{device_id}` |
-| Notify | `notify.raybans_{device_id}` |
+| `sensor.ray_ban_meta_{id}_battery` | ✅ Updates on BT battery events |
+| `binary_sensor.ray_ban_meta_{id}_connected` | ✅ Tracks BT connection |
+| `binary_sensor.ray_ban_meta_{id}_worn` | ❌ Always Unavailable (SDK limitation) |
+| `camera.ray_ban_meta_{id}` | ❌ No frames (SDK limitation) |
+| `notify.raybans_{id}` | ✅ Works great |
 
 ### 2. Long-Lived Access Token
 
-In HA: **Profile → Security → Long-Lived Access Tokens → Create Token**
+HA **Profile → Security → Long-Lived Access Tokens → Create Token**. This same token authenticates both the WebSocket connection and the MCP server calls.
 
-Copy it — you'll need it in the Android app.
-
-### 3. Android Bridge App
+### 3. Android App
 
 #### Configure mwdat credentials
 
@@ -139,7 +129,13 @@ Edit `local.properties`:
 ```properties
 sdk.dir=/path/to/Android/Sdk
 github.username=YOUR_GITHUB_USERNAME
-github.token=YOUR_GITHUB_PAT_WITH_READ_PACKAGES
+github.token=YOUR_GITHUB_PAT
+```
+
+Also add your mwdat app credentials to `AndroidManifest.xml` (get these from the Meta developer portal after SDK approval):
+```xml
+<meta-data android:name="com.meta.wearable.mwdat.APPLICATION_ID" android:value="YOUR_APP_ID" />
+<meta-data android:name="com.meta.wearable.mwdat.CLIENT_TOKEN" android:value="YOUR_CLIENT_TOKEN" />
 ```
 
 #### Build and install
@@ -150,75 +146,80 @@ cd android-bridge
 adb install app/build/outputs/apk/debug/app-debug.apk
 ```
 
-Or open `android-bridge/` in Android Studio and run directly.
-
 #### Configure the app
 
-1. Open **Ray-Ban HA Bridge** on your phone
-2. Enter your **HA URL** (e.g. `https://example.ui.nabu.casa` or your local URL)
-3. Paste your **long-lived access token**
-4. Enter the same **Device ID** you used in the HA config flow
-5. Set the **MJPEG port** (default `8080`) — your phone's LAN IP + this port = the MJPEG URL
-6. Tap **Connect**
+Open **Ray-Ban HA Bridge** and fill in all fields:
+
+| Field | Example |
+|---|---|
+| HA URL | `https://abc123.ui.nabu.casa` |
+| Long-lived access token | The one you just created |
+| Device ID | `wayfarer` (matches HA config) |
+| MJPEG port | `8080` |
+| Anthropic API key | `sk-ant-api03-…` |
+| HA MCP URL | `https://abc123.ui.nabu.casa/api/mcp` |
+
+Tap **Connect**. A persistent notification appears. You're live.
+
+### 4. "Hey Meta" → HA (optional but the whole point)
+
+When the integration loads, HA logs the full webhook URL. Find it in **Settings → System → Logs** or look for `raybans_ask_` in the log output. It'll be:
+
+```
+POST https://your-ha.nabu.casa/api/webhook/raybans_ask_<device_id>
+Body: {"text": "your command here"}
+```
+
+Register this as a Meta AI custom action in the [Meta AI developer portal](https://developers.meta.com/). Set the trigger phrase to something like "ask home assistant." After setup:
+
+> "Hey Meta, ask home assistant to turn on Jeff's office light"
+
+Meta AI hits the webhook → HA fires an event → Android bridge picks it up → Claude calls the HA MCP tool → glasses speak the response. It's a lot of hops but it works.
 
 ---
 
 ## Usage
 
-### Send a notification to the glasses
+### Sending notifications
 
 ```yaml
-service: notify.raybans_raybans
+service: notify.raybans_wayfarer
 data:
-  message: "Dinner is ready"
+  message: "Your laundry is done"
 ```
 
-Or via Developer Tools → Services.
+Works from automations, scripts, the developer tools — anywhere HA can send a notification.
 
-### Voice / Assist
+### Voice control
 
-Configure an [Assist pipeline](https://www.home-assistant.io/docs/assist/pipelines/) in HA with your preferred STT and TTS providers. The Android app streams mic audio to the pipeline on speech detection and plays the TTS response through the glasses speakers.
+Pull down the notification shade, tap **Ask HA**, speak your request. Claude has access to your complete HA tool set via MCP and can handle chained commands, queries, and anything else HA exposes.
 
-### Camera stream
-
-Add a **Picture Glance** or **Camera** card to your dashboard pointing to `camera.raybans_camera_raybans`. The stream only works on your local LAN.
+Or just use "Hey Meta, ask home assistant to [anything]" if you set up the webhook.
 
 ---
 
-## How State Push Works
+## Why Things Don't Work
 
-The Android bridge app pushes sensor states directly to HA's REST API — no webhook or polling required:
+**Glasses microphone** — `getMicAudioStream()` returns `emptyFlow()`. mwdat v0.4.0 has the `StreamSession` object but audio capture is not exposed publicly. The code for HA Assist integration is fully written (`AssistPipelineClient.kt`) and will work the moment the SDK provides audio frames. Until then, phone mic it is.
 
-```
-POST /api/states/sensor.raybans_battery_raybans
-Authorization: Bearer <token>
-{"state": 85, "attributes": {"unit_of_measurement": "%", "device_class": "battery"}}
-```
+**Camera stream** — `StreamSession.capturePhoto()` returns `PhotoData`. `PhotoData` is an interface with zero public methods for extracting bytes. The NanoHTTPD server starts on port 8080, the `/stream` and `/snapshot` endpoints exist, and every single request to them returns a 503. This will be fixed when Meta ships a concrete `PhotoData` implementation.
 
-The HA integration entities use `RestoreEntity` so the last known state survives HA restarts.
+**Worn detection** — Not in the SDK. `MetaGlassesManager` has `onWornStateChanged()` in the listener interface, ready and waiting. mwdat has not called it once. The entity shows Unavailable, which is at least truthful.
 
----
-
-## Limitations
-
-| Limitation | Notes |
-|---|---|
-| Camera stream is LAN-only | Bluetooth max ~2–4 Mbps; insufficient for remote MJPEG |
-| Worn detection | mwdat v0.4.0 may not expose this directly; accelerometer heuristic planned |
-| Wake word | Phase 2 — Porcupine or openWakeWord integration |
-| Battery API | Falls back to `BATTERY_LEVEL_CHANGED` BT broadcast if mwdat doesn't expose it |
+**mwdat DeviceSession going STOPPED immediately** — This is the SDK failing to establish its own application-level session, probably due to app registration state. It doesn't affect Bluetooth audio, battery reporting, or anything the user actually cares about. We use Bluetooth ACL broadcasts for connection state and ignore mwdat's opinion on the matter.
 
 ---
 
 ## Roadmap
 
-- [ ] Wake word activation ("Hey Home Assistant") via Porcupine / openWakeWord
+- [ ] Camera frames (blocked on `PhotoData.toByteArray()` in a future mwdat release)
+- [ ] Glasses mic audio (blocked on public audio stream in mwdat)
+- [ ] Physical glasses button as push-to-talk (mwdat gesture API, not yet public)
 - [ ] Worn detection via accelerometer heuristic
-- [ ] Optional MQTT transport (for offline-first / multi-device)
-- [ ] HACS integration listing
+- [ ] Wake word activation via Porcupine
 
 ---
 
 ## License
 
-MIT
+MIT. Use it, break it, fix it, complain about mwdat in the issues.

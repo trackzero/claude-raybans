@@ -23,7 +23,9 @@
       "Bash(\"/c/Users/track/AppData/Local/Android/Sdk/platform-tools/adb.exe\":*)",
       "Bash(\"/c/Users/track/AppData/Local/Android/Sdk/platform-tools/adb.exe\" install:*)",
       "Bash(adb:*)",
-      "Bash(JAVA_HOME=\"C:/Program Files/Android/Android Studio/jbr\" PATH=\"$JAVA_HOME/bin:$PATH\" ./gradlew.bat assembleDebug:*)"
+      "Bash(JAVA_HOME=\"C:/Program Files/Android/Android Studio/jbr\" PATH=\"$JAVA_HOME/bin:$PATH\" ./gradlew.bat assembleDebug:*)",
+      "Bash(\"C:/Program Files/Android/Android Studio/jbr/bin/jar.exe\" tf:*)",
+      "Bash(\"C:/Program Files/Android/Android Studio/jbr/bin/jar.exe\":*)"
     ]
   }
 }

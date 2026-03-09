@@ -61,9 +61,10 @@ class _RayBanBinarySensor(RestoreEntity, BinarySensorEntity):
 class RayBanWornSensor(_RayBanBinarySensor):
     """Indicates whether the glasses are currently being worn.
 
-    State pushed by Android bridge:
-      POST /api/states/binary_sensor.raybans_worn_{device_id}
-      Body: {"state": "on"} or {"state": "off"}
+    NOTE: mwdat v0.4.0 does not expose a worn-detection API, so this sensor
+    will always show Unavailable until a future SDK version adds support.
+    Restoring previous state is intentionally disabled to avoid showing
+    stale "Clear" when the SDK can't actually confirm worn status.
     """
 
     _attr_device_class = BinarySensorDeviceClass.OCCUPANCY
@@ -72,6 +73,12 @@ class RayBanWornSensor(_RayBanBinarySensor):
 
     def __init__(self, device_id: str, entry_id: str) -> None:
         super().__init__(device_id, SUFFIX_WORN)
+        # Start unavailable — mwdat v0.4.0 has no worn detection
+        self._attr_is_on = None
+
+    async def async_added_to_hass(self) -> None:
+        # Intentionally skip RestoreEntity — stale "Clear" is worse than Unavailable
+        pass
 
 
 class RayBanConnectedSensor(_RayBanBinarySensor):

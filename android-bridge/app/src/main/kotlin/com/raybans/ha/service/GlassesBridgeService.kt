@@ -96,11 +96,15 @@ class GlassesBridgeService : LifecycleService() {
         haApiClient = HaApiClient(haUrl, haToken, deviceId)
         ttsPlayer = TtsPlayer(this)
 
-        haWsClient = HaWebSocketClient(haUrl, haToken) { text, eventDeviceId ->
-            if (eventDeviceId == deviceId || eventDeviceId.isEmpty()) {
-                ttsPlayer.speak(text)
-            }
-        }
+        haWsClient = HaWebSocketClient(
+            haUrl = haUrl,
+            haToken = haToken,
+            onNotifyEvent = { text, eventDeviceId ->
+                if (eventDeviceId == deviceId || eventDeviceId.isEmpty()) {
+                    ttsPlayer.speak(text)
+                }
+            },
+        )
 
         assistClient = AssistPipelineClient(haWsClient, ttsPlayer, lifecycleScope)
 
@@ -132,17 +136,19 @@ class GlassesBridgeService : LifecycleService() {
         glassesManager = MetaGlassesManager(this, lifecycleScope).apply {
             setListener(object : MetaGlassesManager.Listener {
                 override fun onConnected() {
-                    lifecycleScope.launch(Dispatchers.IO) { haApiClient.pushConnected(true) }
+                    // mwdat session connected — start camera/voice, but don't use
+                    // for the HA "connected" sensor (DeviceSession stops too eagerly).
+                    // BT ACL state (in batteryMonitor) drives the sensor instead.
                     startStreamSession()
                     voiceCapture.start()
                     cameraServer.startCollecting()
                 }
                 override fun onDisconnected() {
-                    lifecycleScope.launch(Dispatchers.IO) { haApiClient.pushConnected(false) }
                     voiceCapture.stop()
                     cameraServer.stopCollecting()
                 }
                 override fun onWornStateChanged(worn: Boolean) {
+                    // mwdat v0.4.0 never calls this — keeping the hook for future SDK versions
                     lifecycleScope.launch(Dispatchers.IO) { haApiClient.pushWorn(worn) }
                 }
                 override fun onError(error: String) {
@@ -161,8 +167,29 @@ class GlassesBridgeService : LifecycleService() {
             }
         }
 
-        batteryMonitor = BatteryMonitor(this) { level ->
-            lifecycleScope.launch(Dispatchers.IO) { haApiClient.pushBattery(level) }
+        batteryMonitor = BatteryMonitor(
+            context = this,
+            onBatteryLevel = { level ->
+                lifecycleScope.launch(Dispatchers.IO) { haApiClient.pushBattery(level) }
+            },
+            onConnected = {
+                Log.i(TAG, "Glasses BT connected (ACL)")
+                lifecycleScope.launch(Dispatchers.IO) { haApiClient.pushConnected(true) }
+            },
+            onDisconnected = {
+                Log.i(TAG, "Glasses BT disconnected (ACL)")
+                lifecycleScope.launch(Dispatchers.IO) { haApiClient.pushConnected(false) }
+            },
+        )
+
+        // Wire Meta AI webhook → Claude voice assist via HA WS event
+        haWsClient.onAskEvent = { text ->
+            val assist = claudeAssist
+            if (assist != null) {
+                lifecycleScope.launch(Dispatchers.IO) { assist.processQuery(text) }
+            } else {
+                ttsPlayer.speak("Claude is not configured.")
+            }
         }
 
         cameraServer = CameraStreamServer(glassesManager, lifecycleScope, mjpegPort)

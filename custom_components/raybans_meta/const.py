@@ -12,6 +12,9 @@ EVENT_NOTIFY = "raybans_meta_notify"
 # HA event fired by Android bridge to push sensor state updates
 EVENT_SENSOR = "raybans_meta_sensor"
 
+# HA event fired by the webhook when Meta AI calls the ask endpoint
+EVENT_ASK = "raybans_meta_ask"
+
 # Platforms
 PLATFORMS = ["sensor", "binary_sensor", "camera", "notify"]
 
