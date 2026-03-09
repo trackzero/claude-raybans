@@ -6,7 +6,9 @@ An Android bridge app and HA custom integration that connects your Ray-Ban Meta 
 
 ## Does it actually work?
 
-Mostly! Here's the honest breakdown:
+lol no, this is what Claude thinks but it's pretty far off base.  The main thing that is working is using the glasses as a notification target, and the battery sensor.
+
+The android bridge app is functioning but there's....there's a lot gone wrong here.
 
 | Feature | Status | Notes |
 |---|---|---|
@@ -16,10 +18,10 @@ Mostly! Here's the honest breakdown:
 | **Battery sensor** | ✅ Works | Required fixing an Android 13+ broadcast registration bug that silently dropped all events |
 | **Connected sensor** | ✅ Works | Uses Bluetooth ACL events — mwdat's session state is useless here |
 | **Worn sensor** | ❌ Unavailable | mwdat v0.4.0 has no worn detection API. The code is there. The SDK is not cooperating. |
-| **Camera MJPEG stream** | ❌ Non-functional | `PhotoData` in mwdat v0.4.0 is an opaque interface with no `toByteArray()`. We call `capturePhoto()` and return null. With aplomb. |
-| **Glasses mic → HA Assist** | ❌ Not yet | mwdat v0.4.0 exposes no public audio stream. Phone mic is the fallback for Claude queries. |
+| **Camera MJPEG stream** | ⚠️ Implemented, untested | `PhotoData` turns out to be a sealed interface with real subclasses. We decompiled the AAR, found `PhotoData.Bitmap.getBitmap()` and `PhotoData.HEIC.getData()`, and fixed it. Whether the glasses camera actually cooperates at runtime is a separate question. |
+| **Glasses mic → HA Assist** | ⚠️ Implemented, untested | mwdat has no public audio stream, but Meta's own docs say to use Bluetooth HFP/SCO + `AudioRecord` at 8kHz mono. That's now wired up. Phone mic remains the fallback for Claude queries. |
 
-The short version: notifications work great, Claude voice control works great, sensors mostly work, camera is a stub, and the mwdat SDK is holding everything else hostage until Meta finishes the API.
+The short version: notifications work great, Claude voice control works great, sensors mostly work, and we RTFM'd hard enough to fix the camera and glasses mic. Whether "implemented" equals "works" is left as an exercise for the hardware.
 
 ---
 
@@ -200,9 +202,9 @@ Or just use "Hey Meta, ask home assistant to [anything]" if you set up the webho
 
 ## Why Things Don't Work
 
-**Glasses microphone** — `getMicAudioStream()` returns `emptyFlow()`. mwdat v0.4.0 has the `StreamSession` object but audio capture is not exposed publicly. The code for HA Assist integration is fully written (`AssistPipelineClient.kt`) and will work the moment the SDK provides audio frames. Until then, phone mic it is.
+**Glasses microphone** — mwdat v0.4.0 has no public audio stream in `StreamSession`. The fix, per Meta's own developer docs, is Bluetooth HFP/SCO: `AudioManager.startBluetoothSco()` + `AudioRecord` at 8kHz mono. That's implemented in `getMicAudioStream()` now. If the glasses are connected via HFP when the stream starts, this should work. If they're connected via A2DP only, you'll get silence. The code exists; the hardware cooperation is TBD.
 
-**Camera stream** — `StreamSession.capturePhoto()` returns `PhotoData`. `PhotoData` is an interface with zero public methods for extracting bytes. The NanoHTTPD server starts on port 8080, the `/stream` and `/snapshot` endpoints exist, and every single request to them returns a 503. This will be fixed when Meta ships a concrete `PhotoData` implementation.
+**Camera stream** — Turned out `PhotoData` is a sealed interface with two concrete subclasses: `PhotoData.Bitmap` (has `getBitmap(): android.graphics.Bitmap`) and `PhotoData.HEIC` (has `getData(): ByteBuffer`). We found this by decompiling the mwdat-camera AAR rather than waiting for Meta to write docs. `captureJpegSnapshot()` now handles both cases. The MJPEG server at `:8080` should actually return frames. "Should."
 
 **Worn detection** — Not in the SDK. `MetaGlassesManager` has `onWornStateChanged()` in the listener interface, ready and waiting. mwdat has not called it once. The entity shows Unavailable, which is at least truthful.
 
@@ -212,8 +214,8 @@ Or just use "Hey Meta, ask home assistant to [anything]" if you set up the webho
 
 ## Roadmap
 
-- [ ] Camera frames (blocked on `PhotoData.toByteArray()` in a future mwdat release)
-- [ ] Glasses mic audio (blocked on public audio stream in mwdat)
+- [ ] Camera frames — implemented, needs runtime testing with a real StreamSession
+- [ ] Glasses mic audio — implemented via HFP/SCO, needs runtime testing
 - [ ] Physical glasses button as push-to-talk (mwdat gesture API, not yet public)
 - [ ] Worn detection via accelerometer heuristic
 - [ ] Wake word activation via Porcupine
