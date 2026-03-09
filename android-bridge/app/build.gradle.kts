@@ -52,6 +52,8 @@ dependencies {
     implementation(libs.okhttp.logging)
     implementation(libs.datastore.preferences)
     implementation(libs.nanohttpd)
-    implementation(libs.mwdat.core)
-    implementation(libs.mwdat.camera)
+    // mwdat SDK requires Meta developer access via GitHub Packages.
+    // Uncomment once credentials are verified and the package is accessible:
+    // implementation(libs.mwdat.core)
+    // implementation(libs.mwdat.camera)
 }

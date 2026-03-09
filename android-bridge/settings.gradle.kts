@@ -20,7 +20,7 @@ dependencyResolutionManagement {
             url = uri("https://maven.pkg.github.com/facebook/meta-wearables-dat-android")
             credentials {
                 val props = java.util.Properties().apply {
-                    val localProps = rootProject.file("local.properties")
+                    val localProps = file("local.properties")
                     if (localProps.exists()) load(localProps.inputStream())
                 }
                 username = props.getProperty("github.username") ?: System.getenv("GITHUB_USERNAME")
