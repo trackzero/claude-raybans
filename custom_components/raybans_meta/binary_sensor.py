@@ -20,12 +20,12 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     device_id = entry.data[CONF_DEVICE_ID]
-    async_add_entities(
-        [
-            RayBanWornSensor(device_id, entry.entry_id),
-            RayBanConnectedSensor(device_id, entry.entry_id),
-        ]
-    )
+    worn = RayBanWornSensor(device_id, entry.entry_id)
+    connected = RayBanConnectedSensor(device_id, entry.entry_id)
+    async_add_entities([worn, connected])
+    entities = hass.data[DOMAIN][entry.entry_id]["entities"]
+    entities["worn"] = worn
+    entities["connected"] = connected
 
 
 class _RayBanBinarySensor(RestoreEntity, BinarySensorEntity):
@@ -47,6 +47,11 @@ class _RayBanBinarySensor(RestoreEntity, BinarySensorEntity):
         await super().async_added_to_hass()
         if (last_state := await self.async_get_last_state()) is not None:
             self._attr_is_on = last_state.state == "on"
+
+    def handle_update(self, value) -> None:
+        """Called by __init__.py when a raybans_meta_sensor event arrives."""
+        self._attr_is_on = value == "on"
+        self.async_write_ha_state()
 
     @property
     def should_poll(self) -> bool:

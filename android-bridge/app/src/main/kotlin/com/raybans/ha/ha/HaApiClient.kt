@@ -9,21 +9,18 @@ import org.json.JSONObject
 import java.io.IOException
 
 private const val TAG = "HaApiClient"
+private const val EVENT_SENSOR = "raybans_meta_sensor"
 private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
 
 /**
- * OkHttp REST client that pushes entity state updates to HA.
+ * OkHttp REST client that pushes sensor state to HA.
  *
- * Android is the source of truth for glasses state; HA entities are
- * kept in sync by POSTing to `/api/states/{entity_id}`.
+ * Fires HA events via `POST /api/events/raybans_meta_sensor`.
+ * The HA custom component subscribes to this event and calls
+ * async_write_ha_state() on the matching entity — avoiding any
+ * dependency on auto-generated entity IDs.
  *
- * All methods are synchronous — call from a background thread / coroutine
- * with Dispatchers.IO.
- *
- * Entity ID pattern: `{domain}.raybans_{suffix}_{deviceId}`
- *   sensor.raybans_battery_raybans
- *   binary_sensor.raybans_worn_raybans
- *   binary_sensor.raybans_connected_raybans
+ * All methods are synchronous — call from Dispatchers.IO.
  */
 class HaApiClient(
     private val haUrl: String,
@@ -33,44 +30,31 @@ class HaApiClient(
     private val client = OkHttpClient()
 
     fun pushBattery(level: Int) {
-        val entityId = "sensor.raybans_battery_$deviceId"
-        val body = JSONObject().apply {
-            put("state", level)
-            put("attributes", JSONObject().apply {
-                put("unit_of_measurement", "%")
-                put("device_class", "battery")
-                put("friendly_name", "Ray-Ban Meta Battery")
-            })
-        }
-        postState(entityId, body)
+        fireEvent(JSONObject().apply {
+            put("device_id", deviceId)
+            put("type", "battery")
+            put("value", level)
+        })
     }
 
     fun pushWorn(worn: Boolean) {
-        val entityId = "binary_sensor.raybans_worn_$deviceId"
-        val body = JSONObject().apply {
-            put("state", if (worn) "on" else "off")
-            put("attributes", JSONObject().apply {
-                put("device_class", "occupancy")
-                put("friendly_name", "Ray-Ban Meta Worn")
-            })
-        }
-        postState(entityId, body)
+        fireEvent(JSONObject().apply {
+            put("device_id", deviceId)
+            put("type", "worn")
+            put("value", if (worn) "on" else "off")
+        })
     }
 
     fun pushConnected(connected: Boolean) {
-        val entityId = "binary_sensor.raybans_connected_$deviceId"
-        val body = JSONObject().apply {
-            put("state", if (connected) "on" else "off")
-            put("attributes", JSONObject().apply {
-                put("device_class", "connectivity")
-                put("friendly_name", "Ray-Ban Meta Connected")
-            })
-        }
-        postState(entityId, body)
+        fireEvent(JSONObject().apply {
+            put("device_id", deviceId)
+            put("type", "connected")
+            put("value", if (connected) "on" else "off")
+        })
     }
 
-    private fun postState(entityId: String, body: JSONObject) {
-        val url = "${haUrl.trimEnd('/')}/api/states/$entityId"
+    private fun fireEvent(body: JSONObject) {
+        val url = "${haUrl.trimEnd('/')}/api/events/$EVENT_SENSOR"
         val request = Request.Builder()
             .url(url)
             .addHeader("Authorization", "Bearer $haToken")
@@ -81,13 +65,13 @@ class HaApiClient(
         try {
             client.newCall(request).execute().use { response ->
                 if (response.isSuccessful) {
-                    Log.d(TAG, "Pushed $entityId → ${body.optString("state")}")
+                    Log.d(TAG, "Fired $EVENT_SENSOR: ${body.optString("type")}=${body.opt("value")}")
                 } else {
-                    Log.w(TAG, "Failed to push $entityId: HTTP ${response.code}")
+                    Log.w(TAG, "Failed to fire event: HTTP ${response.code}")
                 }
             }
         } catch (e: IOException) {
-            Log.e(TAG, "Network error pushing $entityId: ${e.message}")
+            Log.e(TAG, "Network error firing event: ${e.message}")
         }
     }
 }

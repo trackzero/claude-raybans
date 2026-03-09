@@ -22,7 +22,9 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     device_id = entry.data[CONF_DEVICE_ID]
-    async_add_entities([RayBanBatterySensor(device_id, entry.entry_id)])
+    entity = RayBanBatterySensor(device_id, entry.entry_id)
+    async_add_entities([entity])
+    hass.data[DOMAIN][entry.entry_id]["entities"]["battery"] = entity
 
 
 class RayBanBatterySensor(RestoreEntity, SensorEntity):
@@ -60,7 +62,14 @@ class RayBanBatterySensor(RestoreEntity, SensorEntity):
             except (ValueError, TypeError):
                 self._attr_native_value = None
 
-    # State is written externally via REST API push — no polling needed.
+    def handle_update(self, value) -> None:
+        """Called by __init__.py when a raybans_meta_sensor event arrives."""
+        try:
+            self._attr_native_value = int(value)
+        except (ValueError, TypeError):
+            return
+        self.async_write_ha_state()
+
     @property
     def should_poll(self) -> bool:
         return False

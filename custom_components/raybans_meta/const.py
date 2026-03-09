@@ -9,6 +9,9 @@ CONF_MJPEG_URL = "mjpeg_url"
 # HA event fired by notify platform; Android WS client listens for this
 EVENT_NOTIFY = "raybans_meta_notify"
 
+# HA event fired by Android bridge to push sensor state updates
+EVENT_SENSOR = "raybans_meta_sensor"
+
 # Platforms
 PLATFORMS = ["sensor", "binary_sensor", "camera", "notify"]
 
