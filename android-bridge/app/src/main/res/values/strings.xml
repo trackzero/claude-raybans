@@ -6,9 +6,12 @@
     <string name="hint_ha_token">Long-lived access token</string>
     <string name="hint_device_id">Device ID (e.g. raybans)</string>
     <string name="hint_mjpeg_port">MJPEG port (default 8080)</string>
+    <string name="hint_claude_api_key">Anthropic API key (sk-ant-…)</string>
+    <string name="hint_mcp_url">HA MCP URL (e.g. https://…nabu.casa/api/mcp)</string>
 
     <string name="btn_connect">Connect</string>
     <string name="btn_disconnect">Disconnect</string>
+    <string name="btn_ask_ha">Ask HA</string>
 
     <string name="hint_mjpeg_info">The MJPEG stream URL to enter in HA config flow is:\nhttp://&lt;this-phone-IP&gt;:&lt;port&gt;</string>
 

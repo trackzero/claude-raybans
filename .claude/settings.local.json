@@ -1,0 +1,29 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "WebFetch(domain:developers.home-assistant.io)",
+      "WebFetch(domain:wearables.developer.meta.com)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:developers.meta.com)",
+      "Bash(cd \"E:/repos/claude-raybans\" && git checkout -b main && git push -u origin main 2>&1)",
+      "Bash(\"$GRADLE_BIN\" wrapper:*)",
+      "Bash(export:*)",
+      "Bash(powershell.exe:*)",
+      "Bash(cmd.exe:*)",
+      "Bash(grep -E \"\\\\.\\(jar|aar\\)$\")",
+      "Bash(cp:*)",
+      "Bash(jar tf:*)",
+      "Bash(\"$JAVA_HOME/bin/jar\" tf:*)",
+      "Bash(\"/c/Program Files/Android/Android Studio/jbr/bin/jar.exe\" tf:*)",
+      "Bash(xargs basename:*)",
+      "Bash(xargs:*)",
+      "Bash(\"/c/Users/track/AppData/Local/Android/Sdk/platform-tools/adb.exe\" devices:*)",
+      "Bash(\"/c/Users/track/AppData/Local/Android/Sdk/platform-tools/adb.exe\" logcat:*)",
+      "Bash(\"/c/Users/track/AppData/Local/Android/Sdk/platform-tools/adb.exe\":*)",
+      "Bash(\"/c/Users/track/AppData/Local/Android/Sdk/platform-tools/adb.exe\" install:*)",
+      "Bash(adb:*)",
+      "Bash(JAVA_HOME=\"C:/Program Files/Android/Android Studio/jbr\" PATH=\"$JAVA_HOME/bin:$PATH\" ./gradlew.bat assembleDebug:*)"
+    ]
+  }
+}
