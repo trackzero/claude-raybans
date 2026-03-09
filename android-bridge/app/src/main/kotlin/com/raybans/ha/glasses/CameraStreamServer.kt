@@ -4,6 +4,7 @@ import android.util.Log
 import fi.iki.elonen.NanoHTTPD
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import java.io.ByteArrayInputStream
@@ -12,6 +13,8 @@ import java.io.PipedOutputStream
 
 private const val TAG = "CameraStreamServer"
 private const val BOUNDARY = "raybans_frame_boundary"
+// Poll for a new snapshot at ~5 fps while MJPEG clients are connected.
+private const val SNAPSHOT_INTERVAL_MS = 200L
 
 /**
  * NanoHTTPD-based HTTP server that serves the glasses camera as an MJPEG stream.
@@ -24,8 +27,12 @@ private const val BOUNDARY = "raybans_frame_boundary"
  * (default 8080). The HA camera entity's MJPEG URL is:
  *   http://<phone-lan-ip>:<port>/stream
  *
- * Only works on the local LAN; Bluetooth bandwidth is insufficient for
- * reliable remote streaming.
+ * Frame acquisition strategy:
+ *   mwdat v0.4.0 exposes [StreamSession.capturePhoto] (suspend) for JPEG snapshots.
+ *   We poll it at [SNAPSHOT_INTERVAL_MS] and cache the last frame.
+ *   VideoFrame is H.265-encoded; re-encoding on device is deferred to a future update.
+ *
+ * Only works on the local LAN; Bluetooth bandwidth is insufficient for remote streaming.
  */
 class CameraStreamServer(
     private val manager: MetaGlassesManager,
@@ -33,37 +40,44 @@ class CameraStreamServer(
     port: Int = 8080,
 ) : NanoHTTPD(port) {
 
-    /** Latest JPEG frame — used by /snapshot and new MJPEG stream connections. */
+    /** Latest JPEG frame — shared by /snapshot and all active MJPEG clients. */
     private val latestFrame = MutableStateFlow<ByteArray?>(null)
-    private var frameCollectJob: Job? = null
+    private var snapshotJob: Job? = null
 
+    /**
+     * Start polling for JPEG snapshots. Called from [MetaGlassesManager.Listener.onConnected]
+     * after a [com.meta.wearable.dat.camera.StreamSession] has been started.
+     */
     fun startCollecting() {
-        frameCollectJob = scope.launch {
-            manager.getCameraFrameStream().collect { jpeg ->
-                latestFrame.value = jpeg
+        snapshotJob = scope.launch {
+            while (true) {
+                val jpeg = manager.captureJpegSnapshot()
+                if (jpeg != null) latestFrame.value = jpeg
+                delay(SNAPSHOT_INTERVAL_MS)
             }
         }
+        Log.i(TAG, "Snapshot collection started")
     }
 
     fun stopCollecting() {
-        frameCollectJob?.cancel()
-        frameCollectJob = null
+        snapshotJob?.cancel()
+        snapshotJob = null
+        latestFrame.value = null
+        Log.i(TAG, "Snapshot collection stopped")
     }
 
     override fun serve(session: IHTTPSession): Response {
         return when (session.uri) {
             "/stream" -> serveMjpegStream()
             "/snapshot" -> serveSnapshot()
-            else -> newFixedLengthResponse(
-                Response.Status.NOT_FOUND, MIME_PLAINTEXT, "Not found"
-            )
+            else -> newFixedLengthResponse(Response.Status.NOT_FOUND, MIME_PLAINTEXT, "Not found")
         }
     }
 
     private fun serveSnapshot(): Response {
         val frame = latestFrame.value
             ?: return newFixedLengthResponse(
-                Response.Status.SERVICE_UNAVAILABLE, MIME_PLAINTEXT, "No frame yet"
+                Response.Status.SERVICE_UNAVAILABLE, MIME_PLAINTEXT, "No frame available"
             )
         return newFixedLengthResponse(
             Response.Status.OK, "image/jpeg", ByteArrayInputStream(frame), frame.size.toLong()
@@ -74,10 +88,11 @@ class CameraStreamServer(
         val pipedOut = PipedOutputStream()
         val pipedIn = PipedInputStream(pipedOut, 512 * 1024)
 
-        // Pump frames into the piped stream on a background coroutine
         scope.launch {
             try {
-                manager.getCameraFrameStream().collect { jpeg ->
+                // Emit each new frame as an MJPEG part
+                latestFrame.collect { jpeg ->
+                    jpeg ?: return@collect
                     val header = "--$BOUNDARY\r\nContent-Type: image/jpeg\r\nContent-Length: ${jpeg.size}\r\n\r\n"
                     pipedOut.write(header.toByteArray())
                     pipedOut.write(jpeg)
@@ -91,8 +106,11 @@ class CameraStreamServer(
             }
         }
 
-        val contentType = "multipart/x-mixed-replace; boundary=$BOUNDARY"
-        return newChunkedResponse(Response.Status.OK, contentType, pipedIn)
+        return newChunkedResponse(
+            Response.Status.OK,
+            "multipart/x-mixed-replace; boundary=$BOUNDARY",
+            pipedIn
+        )
     }
 
     override fun start() {

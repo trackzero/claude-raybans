@@ -1,6 +1,6 @@
 [versions]
 agp = "8.4.0"
-kotlin = "1.9.24"
+kotlin = "2.1.0"
 coreKtx = "1.13.1"
 appcompat = "1.7.0"
 material = "1.12.0"
@@ -37,8 +37,8 @@ datastore-preferences = { group = "androidx.datastore", name = "datastore-prefer
 nanohttpd = { group = "org.nanohttpd", name = "nanohttpd", version.ref = "nanohttpd" }
 
 # Meta Wearables Device Access Toolkit
-mwdat-core = { group = "com.facebook.mwdat", name = "mwdat-core", version.ref = "mwdat" }
-mwdat-camera = { group = "com.facebook.mwdat", name = "mwdat-camera", version.ref = "mwdat" }
+mwdat-core = { group = "com.meta.wearable", name = "mwdat-core", version.ref = "mwdat" }
+mwdat-camera = { group = "com.meta.wearable", name = "mwdat-camera", version.ref = "mwdat" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

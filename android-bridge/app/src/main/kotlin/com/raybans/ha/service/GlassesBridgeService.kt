@@ -97,12 +97,14 @@ class GlassesBridgeService : LifecycleService() {
         assistClient = AssistPipelineClient(haWsClient, ttsPlayer, lifecycleScope)
 
         // Glasses components
-        glassesManager = MetaGlassesManager(this).apply {
+        glassesManager = MetaGlassesManager(this, lifecycleScope).apply {
             setListener(object : MetaGlassesManager.Listener {
                 override fun onConnected() {
                     lifecycleScope.launch(Dispatchers.IO) {
                         haApiClient.pushConnected(true)
                     }
+                    // Start camera stream session, then begin snapshot polling
+                    startStreamSession()
                     voiceCapture.start()
                     cameraServer.startCollecting()
                 }
@@ -153,7 +155,10 @@ class GlassesBridgeService : LifecycleService() {
         // Start everything
         batteryMonitor.register()
         lifecycleScope.launch(Dispatchers.IO) { haWsClient.connect() }
-        lifecycleScope.launch(Dispatchers.IO) { glassesManager.connect() }
+        lifecycleScope.launch(Dispatchers.IO) {
+            glassesManager.initialize()
+            glassesManager.connect()
+        }
         cameraServer.start()
 
         Log.i(TAG, "Bridge service fully initialized")

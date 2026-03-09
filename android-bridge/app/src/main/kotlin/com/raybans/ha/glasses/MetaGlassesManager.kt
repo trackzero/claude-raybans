@@ -2,76 +2,39 @@ package com.raybans.ha.glasses
 
 import android.content.Context
 import android.util.Log
-import kotlinx.coroutines.channels.awaitClose
+import com.meta.wearable.dat.camera.StreamSession
+import com.meta.wearable.dat.camera.startStreamSession
+import com.meta.wearable.dat.camera.types.StreamConfiguration
+import com.meta.wearable.dat.camera.types.VideoFrame
+import com.meta.wearable.dat.core.Wearables
+import com.meta.wearable.dat.core.selectors.AutoDeviceSelector
+import com.meta.wearable.dat.core.session.DeviceSession
+import com.meta.wearable.dat.core.session.DeviceSessionState
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.launch
 
 private const val TAG = "MetaGlassesManager"
 
-// ---------------------------------------------------------------------------
-// Stub interfaces — replace with real mwdat SDK classes when available.
-//
-// The Meta Wearables Device Access Toolkit (mwdat) SDK is distributed via
-// GitHub Packages (facebook/meta-wearables-dat-android) and requires Meta
-// Developer Program access. Once access is granted:
-//   1. Uncomment mwdat dependencies in app/build.gradle.kts
-//   2. Replace stub body below with real mwdat API calls
-//   3. Verify class/method names against the mwdat v0.4.0 changelog
-// ---------------------------------------------------------------------------
-
-private interface WearableDeviceListener {
-    fun onConnected(device: StubWearableDevice)
-    fun onDisconnected(device: StubWearableDevice)
-    fun onError(device: StubWearableDevice, error: String)
-}
-
-private interface MicrophoneListener {
-    fun onAudioFrame(pcmData: ByteArray)
-}
-
-private interface CameraListener {
-    fun onFrame(jpegData: ByteArray)
-}
-
-private class StubWearableDevice {
-    val microphone = StubMicrophone()
-    val camera = StubCamera()
-    fun disconnect() {}
-}
-
-private class StubMicrophone {
-    fun addListener(l: MicrophoneListener) {}
-    fun removeListener(l: MicrophoneListener) {}
-    fun startCapture() {}
-    fun stopCapture() {}
-}
-
-private class StubCamera {
-    fun addListener(l: CameraListener) {}
-    fun removeListener(l: CameraListener) {}
-    fun startStream() {}
-    fun stopStream() {}
-}
-
-// ---------------------------------------------------------------------------
-
 /**
- * Wraps the mwdat-core [WearableDevice] connection lifecycle.
+ * Wraps the mwdat SDK connection lifecycle for Ray-Ban Meta Gen 2 glasses.
  *
- * Responsibilities:
- *  - Connect / disconnect to the paired Ray-Ban Meta glasses
- *  - Emit lifecycle callbacks consumed by [GlassesBridgeService]
- *  - Expose mic audio as a [Flow<ByteArray>] for [VoiceCapture]
- *  - Expose camera frames as a [Flow<ByteArray>] (JPEG) for [CameraStreamServer]
+ * Lifecycle:
+ *  1. Call [initialize] (suspend) — initializes the Wearables SDK singleton.
+ *  2. Call [connect] — creates a [DeviceSession] with [AutoDeviceSelector] and starts it.
+ *  3. [Listener] callbacks fire on connect/disconnect.
+ *  4. After [Listener.onConnected], call [startStreamSession] for camera access.
+ *  5. Call [disconnect] on service stop.
  *
- * SDK limitation note (mwdat v0.4.0):
- *  - Battery level and worn-detection are not yet part of the public API.
- *    Those are handled by [BatteryMonitor] (BT broadcast) and an
- *    accelerometer heuristic respectively.
+ * Battery and worn state are not part of the mwdat v0.4.0 public API.
+ * Battery is handled externally by [BatteryMonitor] via BT broadcasts.
  */
-class MetaGlassesManager(private val context: Context) {
-
+class MetaGlassesManager(
+    private val context: Context,
+    private val scope: CoroutineScope,
+) {
     interface Listener {
         fun onConnected()
         fun onDisconnected()
@@ -80,76 +43,113 @@ class MetaGlassesManager(private val context: Context) {
     }
 
     private var listener: Listener? = null
-    private var device: StubWearableDevice? = null
+    private var deviceSession: DeviceSession? = null
+    private var streamSession: StreamSession? = null
 
-    fun setListener(l: Listener) {
-        listener = l
+    fun setListener(l: Listener) { listener = l }
+
+    /**
+     * Initialize the mwdat SDK. Suspend — call from a coroutine on IO dispatcher.
+     */
+    suspend fun initialize() {
+        try {
+            // Wearables is a Kotlin object (singleton); initialize() is a suspend fun.
+            // The JVM-mangled name contains the return value class suffix but Kotlin sees it as initialize().
+            Wearables.initialize(context)
+            Log.i(TAG, "Wearables SDK initialized. State: ${Wearables.registrationState.value}")
+        } catch (e: Exception) {
+            Log.e(TAG, "SDK initialization failed", e)
+            listener?.onError("SDK init failed: ${e.message}")
+        }
     }
 
     /**
-     * Connect to the first paired Ray-Ban Meta device found.
-     * Must be called from a coroutine or background thread.
-     *
-     * TODO: replace StubWearableDevice with real mwdat WearableDevice.connect() call.
+     * Start a [DeviceSession] using [AutoDeviceSelector] (picks the first paired Meta device).
+     * Observes session state and fires [Listener] callbacks.
      */
     fun connect() {
-        Log.d(TAG, "Connecting to Ray-Ban Meta glasses… (stub — mwdat SDK not linked)")
-        // Real implementation:
-        //   device = WearableDevice.connect(context, object : WearableDeviceListener { … })
-        // For now we log and do nothing; the HA sensor push still works via BatteryMonitor.
+        Log.d(TAG, "Starting DeviceSession")
+        val session = DeviceSession(AutoDeviceSelector())
+        deviceSession = session
+        session.start()
+
+        scope.launch(Dispatchers.IO) {
+            session.state.collect { state ->
+                Log.d(TAG, "DeviceSession state → $state")
+                when (state) {
+                    DeviceSessionState.STARTED -> listener?.onConnected()
+                    DeviceSessionState.STOPPED -> listener?.onDisconnected()
+                }
+            }
+        }
     }
 
     fun disconnect() {
-        device?.disconnect()
-        device = null
+        streamSession?.close()
+        streamSession = null
+        deviceSession?.stop()
+        deviceSession = null
+        Log.d(TAG, "DeviceSession stopped")
     }
 
     /**
-     * Returns a [Flow] of raw PCM audio frames (16-bit LE, 16 kHz, mono)
-     * captured from the glasses microphone.
+     * Start a camera [StreamSession].
+     * Must be called after the device reports [DeviceSessionState.STARTED].
      *
-     * Returns [emptyFlow] until the real mwdat SDK is linked.
+     * The returned session exposes:
+     *  - [StreamSession.videoStream] — Flow<VideoFrame> (H.265 encoded frames)
+     *  - [StreamSession.capturePhoto] — suspend fun for a single JPEG snapshot
+     *  - [StreamSession.state] — StateFlow<StreamSessionState>
      */
-    fun getMicAudioStream(): Flow<ByteArray> {
-        val d = device ?: return emptyFlow()
-
-        return callbackFlow {
-            val micListener = object : MicrophoneListener {
-                override fun onAudioFrame(pcmData: ByteArray) {
-                    trySend(pcmData)
-                }
-            }
-            d.microphone.addListener(micListener)
-            d.microphone.startCapture()
-
-            awaitClose {
-                d.microphone.stopCapture()
-                d.microphone.removeListener(micListener)
-            }
+    fun startStreamSession(): StreamSession? {
+        return try {
+            val config = StreamConfiguration() // default quality + frame rate
+            val session = Wearables.startStreamSession(context, AutoDeviceSelector(), config)
+            streamSession = session
+            Log.i(TAG, "StreamSession started, state=${session.state.value}")
+            session
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to start StreamSession", e)
+            listener?.onError("StreamSession failed: ${e.message}")
+            null
         }
     }
 
     /**
-     * Returns a [Flow] of JPEG-encoded frames from the glasses camera.
+     * Returns a [Flow] of H.265 encoded video frames from the glasses camera.
+     * Returns [emptyFlow] until [startStreamSession] has been called.
      *
-     * Returns [emptyFlow] until the real mwdat SDK is linked.
+     * For the MJPEG server, use [captureJpegSnapshot] to grab snapshots
+     * rather than re-encoding H.265 frames on-device.
      */
-    fun getCameraFrameStream(): Flow<ByteArray> {
-        val d = device ?: return emptyFlow()
+    fun getVideoFrameStream(): Flow<VideoFrame> =
+        streamSession?.videoStream ?: emptyFlow()
 
-        return callbackFlow {
-            val camListener = object : CameraListener {
-                override fun onFrame(jpegData: ByteArray) {
-                    trySend(jpegData)
-                }
-            }
-            d.camera.addListener(camListener)
-            d.camera.startStream()
-
-            awaitClose {
-                d.camera.stopStream()
-                d.camera.removeListener(camListener)
-            }
+    /**
+     * Capture a single JPEG photo via [StreamSession.capturePhoto].
+     * Returns the JPEG bytes, or null on failure.
+     *
+     * Note: [com.meta.wearable.dat.camera.types.PhotoData] is an opaque interface in v0.4.0.
+     * This method returns null until the SDK exposes a concrete toByteArray() call.
+     * Update when Meta provides a concrete PhotoData implementation.
+     */
+    suspend fun captureJpegSnapshot(): ByteArray? {
+        val session = streamSession ?: return null
+        return try {
+            val result = session.capturePhoto()
+            Log.d(TAG, "capturePhoto result: $result")
+            // TODO: extract JPEG bytes from PhotoData when SDK exposes the method
+            null
+        } catch (e: Exception) {
+            Log.e(TAG, "capturePhoto failed", e)
+            null
         }
     }
+
+    /**
+     * Mic audio is not exposed as a public Flow in mwdat v0.4.0.
+     * Audio arrives via internal listener interfaces inside StreamSession.
+     * Returns [emptyFlow] until a future SDK version makes it public.
+     */
+    fun getMicAudioStream(): Flow<ByteArray> = emptyFlow()
 }

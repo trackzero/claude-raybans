@@ -35,6 +35,10 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.RayBanHABridge">
 
+        <!-- mwdat SDK registration -->
+        <meta-data android:name="com.meta.wearable.mwdat.APPLICATION_ID" android:value="2059821081243199" />
+        <meta-data android:name="com.meta.wearable.mwdat.CLIENT_TOKEN" android:value="AR|2059821081243199|185831a9283b47d062de571d1eac377c" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true">
